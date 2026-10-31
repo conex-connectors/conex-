@@ -1,0 +1,10 @@
+name = "conex-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+ALLOWED_ORIGINS = ""
+
+# Secrets (set with `wrangler secret put`, never committed):
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   (next phase)
+#   CONNECTOR_SECRET_KEY                      (credential encryption key, next phase)
