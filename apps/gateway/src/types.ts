@@ -1,20 +1,27 @@
-export interface Linker { userId: string; linkerId: string; enabled: boolean }
 export interface Connector {
   id: string;
   userId: string;
   name: string;
   endpointUrl: string;
-  credentialRef: string | null; // opaque; credential itself lives in a secret store
+  credentialRef: string | null; // opaque; the credential itself is encrypted in conex_connector_secrets
 }
 export type DeleteResult = 'deleted' | 'not_found';
+export type CallOutcome = 'success' | 'error';
 
-/** Persistence contract. Supabase implementation comes later; must pass test/store-contract. */
+export class PlanRequiredError extends Error {
+  constructor() { super('plan_required'); this.name = 'PlanRequiredError'; }
+}
+
 export interface ConnectorStore {
-  getLinker(linkerId: string): Promise<Linker | null>;
+  /** Only connectors the user has left connected (disabled/pending/error are hidden from agents). */
   listConnectors(userId: string): Promise<Connector[]>;
-  /** Idempotent. Removes connector + its secret ref. Safe for the last connector and for missing ids. */
+  /** Idempotent. Works for the last connector and for missing ids. */
   deleteConnector(userId: string, connectorId: string): Promise<DeleteResult>;
-  recordAgentConnection(userId: string, agentName: string): Promise<void>;
-  recordUsage(e: { userId: string; connectorId: string | null; toolName: string; outcome: 'ok' | 'error' }): Promise<void>;
+  touchAgent(userId: string, agentName: string): Promise<void>;
+  /** Atomic plan + daily-quota check. Returns event id, null if the daily limit is hit, throws PlanRequiredError without an active plan. */
+  beginCall(userId: string, connectorId: string, tool: string): Promise<number | null>;
+  finishCall(eventId: number, outcome: CallOutcome): Promise<void>;
 }
 export interface SecretResolver { get(ref: string): Promise<string | null> }
+export interface Principal { userId: string }
+export interface Authenticator { authenticate(token: string): Promise<Principal | null> }
