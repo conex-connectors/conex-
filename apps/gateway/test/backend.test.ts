@@ -65,7 +65,7 @@ test('SupabaseStore: queries, rpc names/args, error mapping, secret decrypt', as
   const s = new SupabaseStore({ url: 'https://p.supabase.co', serviceKey: 'SERVICE', fetch: f, encKey: key });
 
   const list = await s.listConnectors('u1');
-  assert.deepEqual(list, [{ id: 'cid-1', userId: 'u1', name: 'GitHub', endpointUrl: 'https://x.example.com/mcp', credentialRef: 'cid-1' }]);
+  assert.deepEqual(list, [{ id: 'cid-1', userId: 'u1', name: 'GitHub', endpointUrl: 'https://x.example.com/mcp', credentialRef: 'cid-1', authMethod: null, tokenUrl: null, autoRefresh: false }]);
   assert.match(seen[0].url, /user_id=eq\.u1&status=eq\.connected/);
   assert.equal(seen[0].auth, 'Bearer SERVICE');
 
