@@ -1,10 +1,15 @@
 import { decryptSecret } from './crypto.ts';
-import { PlanRequiredError } from './types.ts';
-import type { CallOutcome, Connector, ConnectorStore, DeleteResult, SecretResolver } from './types.ts';
+import { PlanRequiredError, StoreError } from './types.ts';
+import type { AdminStore, ApplySubscriptionArgs, BillingStore, CallOutcome, Connector, ConnectorStatus, ConnectorStore, DeleteResult, NewConnector, SecretResolver, SubscriptionRow } from './types.ts';
 
 export interface SupabaseStoreCfg { url: string; serviceKey: string; fetch: typeof fetch; encKey: CryptoKey }
 
-export class SupabaseStore implements ConnectorStore, SecretResolver {
+const toConnector = (r: any): Connector => ({
+  id: r.id, userId: r.user_id, name: r.name, endpointUrl: r.endpoint_url, credentialRef: r.credential_secret_ref ?? null,
+  authMethod: r.auth_method ?? null, tokenUrl: r.token_url ?? null, autoRefresh: r.auto_refresh === true,
+});
+
+export class SupabaseStore implements ConnectorStore, AdminStore, BillingStore, SecretResolver {
   cfg: SupabaseStoreCfg;
   constructor(cfg: SupabaseStoreCfg) { this.cfg = cfg; }
 
@@ -35,10 +40,10 @@ export class SupabaseStore implements ConnectorStore, SecretResolver {
   async listConnectors(userId: string): Promise<Connector[]> {
     const rows = await this.rest(
       `conex_connectors?user_id=eq.${encodeURIComponent(userId)}&status=eq.connected` +
-      `&select=id,user_id,name,endpoint_url,credential_secret_ref&order=created_at.asc`);
+      `&select=id,user_id,name,endpoint_url,credential_secret_ref,auth_method,token_url,auto_refresh&order=created_at.asc`);
     return (rows as any[])
       .filter((r) => typeof r.endpoint_url === 'string')
-      .map((r) => ({ id: r.id, userId: r.user_id, name: r.name, endpointUrl: r.endpoint_url, credentialRef: r.credential_secret_ref ?? null }));
+      .map((r) => toConnector(r));
   }
 
   async deleteConnector(userId: string, id: string): Promise<DeleteResult> {
@@ -65,5 +70,60 @@ export class SupabaseStore implements ConnectorStore, SecretResolver {
     const row = (rows as any[])[0];
     if (!row) return null;
     try { return await decryptSecret(this.cfg.encKey, row.ciphertext, row.iv, ref); } catch { return null; }
+  }
+
+  async getConnector(userId: string, id: string): Promise<(Connector & { status: ConnectorStatus }) | null> {
+    const rows = (await this.rest(
+      `conex_connectors?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(userId)}` +
+      `&select=id,user_id,name,endpoint_url,credential_secret_ref,auth_method,token_url,auto_refresh,status`)) as any[];
+    return rows[0] && typeof rows[0].endpoint_url === 'string' ? { ...toConnector(rows[0]), status: rows[0].status } : null;
+  }
+
+  async send(path: string, method: string, body?: unknown, prefer = 'return=minimal'): Promise<Response> {
+    return this.cfg.fetch(`${this.cfg.url}/rest/v1/${path}`, {
+      method, headers: { ...this.headers(), prefer }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(8000),
+    });
+  }
+
+  async createConnector(c: NewConnector, secret: { ciphertext: string; iv: string } | null): Promise<void> {
+    const res = await this.send('conex_connectors', 'POST', {
+      id: c.id, user_id: c.userId, name: c.name, connector_type: 'other', endpoint_url: c.endpointUrl, status: 'connected',
+      credential_secret_ref: secret ? c.id : null, auth_method: c.authMethod, token_url: c.tokenUrl, auto_refresh: c.autoRefresh,
+      last_checked_at: new Date().toISOString(),
+    });
+    if (!res.ok) {
+      let msg = '';
+      try { msg = String(((await res.json()) as any).message ?? ''); } catch { /* ignore */ }
+      if (msg === 'plan_required') throw new StoreError('plan_required');
+      if (msg === 'connector_limit_reached') throw new StoreError('connector_limit_reached');
+      throw new StoreError('db_error');
+    }
+    if (secret) {
+      const r2 = await this.send('conex_connector_secrets', 'POST', { connector_id: c.id, ciphertext: secret.ciphertext, iv: secret.iv });
+      if (!r2.ok) { await this.deleteConnector(c.userId, c.id).catch(() => 'not_found'); throw new StoreError('db_error'); }
+    }
+  }
+
+  async setConnectorStatus(userId: string, id: string, status: ConnectorStatus): Promise<boolean> {
+    const res = await this.send(
+      `conex_connectors?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(userId)}`, 'PATCH',
+      { status, last_checked_at: new Date().toISOString() }, 'return=representation');
+    if (!res.ok) throw new StoreError('db_error');
+    return ((await res.json()) as unknown[]).length > 0;
+  }
+
+  async getSubscription(userId: string): Promise<SubscriptionRow | null> {
+    const rows = (await this.rest(
+      `conex_subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=plan,status,billing_interval,current_period_end,provider_subscription_id`)) as any[];
+    const r = rows[0];
+    return r ? { plan: r.plan, status: r.status, billingInterval: r.billing_interval ?? null, periodEnd: r.current_period_end ?? null, providerSubscriptionId: r.provider_subscription_id ?? null } : null;
+  }
+
+  async applySubscription(a: ApplySubscriptionArgs) {
+    const r = await this.rpc('conex_apply_subscription', {
+      p_user: a.userId, p_plan: a.plan, p_interval: a.interval, p_sub_id: a.subscriptionId, p_paypal_plan_id: a.paypalPlanId,
+      p_status: a.status, p_period_end: a.periodEnd, p_event_id: a.eventId, p_event_type: a.eventType, p_event_time: a.eventTime,
+    });
+    return r as 'applied' | 'duplicate' | 'stale' | 'superseded';
   }
 }
