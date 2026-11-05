@@ -6,8 +6,14 @@ compatibility_date = "2026-10-01"
 # Public values (safe to commit).
 SUPABASE_URL = "https://ghszxeovbxocfwvjbvfh.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_0WDwCYI8wdVAKCFCOREPIQ_35Yi3Enp"
+PAYPAL_CLIENT_ID = "BAAGr8yTJNt-i06BBYFFZCQsSDuZppKsshxB4QYzSwOKFaJMDOa4K472th9mWlX_YcR9eEF6q601v0tweM"
+PAYPAL_ENV = "live"
 ALLOWED_ORIGINS = ""
+BROWSE_API_URL = ""
 
 # Secrets (set with `wrangler secret put <NAME>`, never committed):
 #   SUPABASE_SERVICE_ROLE_KEY   backend-only database key
-#   CONNECTOR_SECRET_KEY        base64 of 32 random bytes (encrypts connector credentials)
+#   CONNECTOR_SECRET_KEY        base64 of 32 random bytes (encrypts credentials, signs checkout sessions)
+#   PAYPAL_CLIENT_SECRET        PayPal REST app secret
+#   PAYPAL_WEBHOOK_ID           id of the PayPal webhook that points at  https://<worker>/webhooks/paypal
+#   BROWSE_API_KEY              (optional) key for the connector-directory API
