@@ -1,4 +1,5 @@
 import { validateEndpointWithDns, type Resolver, dohResolver } from './ssrf.ts';
+import { buildAuthHeaders } from './credentials.ts';
 import type { Connector, SecretResolver } from './types.ts';
 
 export interface UpstreamDeps {
@@ -35,8 +36,11 @@ function extractRpc(text: string, contentType: string, id: number): any {
 /** Stateless upstream call: initialize -> initialized -> request. Never echoes credentials. */
 export async function upstreamCall(c: Connector, method: string, params: object | undefined, d: UpstreamDeps): Promise<any> {
   const url = await validateEndpointWithDns(c.endpointUrl, d.resolve ?? dohResolver);
-  const token = c.credentialRef ? await d.secrets.get(c.credentialRef) : null;
-  if (c.credentialRef && !token) throw new UpstreamError('Connector credential unavailable');
+  const secret = c.credentialRef ? await d.secrets.get(c.credentialRef) : null;
+  if (c.credentialRef && !secret) throw new UpstreamError('Connector credential unavailable');
+  let authHeaders: Record<string, string>;
+  try { authHeaders = await buildAuthHeaders(c, secret, { fetch: d.fetch, resolve: d.resolve }); }
+  catch (e) { throw new UpstreamError(e instanceof Error ? e.message : 'Connector credential unavailable'); }
   const timeout = d.timeoutMs ?? 15_000;
   const max = d.maxBytes ?? 2_000_000;
   let session: string | null = null;
@@ -47,7 +51,7 @@ export async function upstreamCall(c: Connector, method: string, params: object 
       accept: 'application/json, text/event-stream',
       'mcp-protocol-version': PROTOCOL,
     };
-    if (token) headers.authorization = `Bearer ${token}`;
+    Object.assign(headers, authHeaders);
     if (session) headers['mcp-session-id'] = session;
     let res: Response;
     try {
