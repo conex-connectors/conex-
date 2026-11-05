@@ -1,0 +1,11 @@
+{
+  "name": "conex",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.6" },
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "typecheck": "npm -w apps/gateway run typecheck",
+    "test": "npm -w apps/gateway test"
+  }
+}
