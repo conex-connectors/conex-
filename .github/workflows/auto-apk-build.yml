@@ -1,0 +1,57 @@
+name: Auto APK build
+
+# Builds the Conex Android app and publishes the APK as a downloadable artifact.
+# Runs on every push that touches apps/android, and by hand: Actions tab -> Auto APK build -> Run workflow.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, feat/conex-production-runtime]
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/auto-apk-build.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/android
+    env:
+      API_BASE: https://conex-gateway.libudatrinity.workers.dev
+      SUPABASE_URL: https://ghszxeovbxocfwvjbvfh.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: sb_publishable_0WDwCYI8wdVAKCFCOREPIQ_35Yi3Enp
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the app exists
+        run: test -f pubspec.yaml || (echo "apps/android has no Flutter app yet" && exit 1)
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - name: Build release APK
+        run: >-
+          flutter build apk --release
+          --dart-define=API_BASE=$API_BASE
+          --dart-define=SUPABASE_URL=$SUPABASE_URL
+          --dart-define=SUPABASE_PUBLISHABLE_KEY=$SUPABASE_PUBLISHABLE_KEY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conex-apk
+          path: apps/android/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
