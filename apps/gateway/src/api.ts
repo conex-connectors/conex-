@@ -5,6 +5,7 @@ import { upstreamCall, type UpstreamDeps } from './upstream.ts';
 import { LIMITS, StoreError, entitled } from './types.ts';
 import type { AdminStore, AuthMethod, BillingStore, Connector, ConnectorStore, SecretResolver } from './types.ts';
 import { isPlanKey } from './plans.ts';
+import { discoverTokenEndpoint } from './discovery.ts';
 import { startCheckout, syncSubscription, type BillingDeps } from './billing.ts';
 
 export interface ApiDeps extends UpstreamDeps {
@@ -116,8 +117,14 @@ export async function handleApi(req: Request, url: URL, userId: string, d: ApiDe
       try { validateEndpointUrl(supabaseUrl); } catch { return err(422, 'url_not_allowed', 'Supabase URL must be a public https address.'); }
       secret = JSON.stringify({ kind: 'supabase', serviceKey, anonKey, supabaseUrl }); authMethod = 'supabase';
     } else {
-      const clientId = str(b.clientId, 512), clientSecret = str(b.clientSecret, 4096), tu = str(b.tokenUrl, 2048);
-      if (!clientId || !clientSecret || !tu) return err(400, 'invalid_input', 'Token URL, client ID and client secret are required.');
+      const clientId = str(b.clientId, 512), clientSecret = str(b.clientSecret, 4096);
+      if (!clientId || !clientSecret) return err(400, 'invalid_input', 'Client ID and client secret are required.');
+      // The user never has to know the token URL: it is discovered from the server URL. An explicit one still wins.
+      let tu = str(b.tokenUrl, 2048);
+      if (!tu) {
+        tu = await discoverTokenEndpoint(endpoint, d);
+        if (!tu) return err(422, 'token_url_needed', 'We could not find this service\'s sign-in address automatically. Enter its token URL to continue.');
+      }
       try { await validateEndpointWithDns(tu, d.resolve); } catch { return err(422, 'url_not_allowed', 'Token URL must be a public https address.'); }
       tokenUrl = tu; authMethod = 'client_credentials'; autoRefresh = b.autoRefresh === true;
       const scope = str(b.scope, 512) ?? undefined;
